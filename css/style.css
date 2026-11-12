@@ -1,0 +1,1410 @@
+/* ============================================================
+ * style.css —— 全局样式
+ * 设计要点：
+ * 1. 所有层绝对定位铺满，互不干扰（DOM 分层 + Canvas 渲染）
+ * 2. 使用 vmin 做自适应缩放，一套代码兼容手机与 PC
+ * 3. 按钮只负责"布局与状态"，具体外观由你的图片决定
+ * ============================================================ */
+
+:root{
+  /* 主题色（感官主题：低饱和、柔和，避免高刺激配色） */
+  --c-bg:        #0b1020;
+  --c-text:      #e8ecf8;
+  --c-text-dim:  #9aa6c4;
+  --c-accent:    #7fd1c1;   /* 主强调色：按钮描边、进度条 */
+  --c-warn:      #e0a06a;   /* 感官负载偏高 */
+  --c-danger:    #d97a7a;   /* 感官过载 */
+  --ui-scale:    1;         /* 由 JS 根据屏幕尺寸动态写入，统一缩放 UI */
+}
+
+*{ box-sizing: border-box; }
+
+html, body{
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  overflow: hidden;                 /* 游戏页禁止滚动 */
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  -webkit-tap-highlight-color: transparent;  /* 去掉移动端点击蓝框 */
+  user-select: none;
+}
+
+#app{ position: relative; width: 100%; height: 100%; overflow: hidden; }
+
+/* ---------- 1. 背景层 ---------- */
+#bg-layer{
+  position: absolute; inset: 0;
+  background-size: cover;            /* 背景图铺满，保持比例 */
+  background-position: center;
+  background-repeat: no-repeat;
+  background-color: var(--c-bg);
+  transition: background-image .4s ease, filter .4s ease, opacity .4s ease;
+  z-index: 1;
+}
+/* 背景图上层压一层暗色渐变，保证文字/按钮可读性。
+   ★ 强度由 config.js 的 GAME_CONFIG.bgScrim 控制（运行时写入下面三个变量）。
+     想让背景更亮 → 调小；想更暗 → 调大。默认值已调得很淡，
+     避免压暗你自己设计的主视觉。 */
+#bg-layer::after{
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(180deg,
+    rgba(11,16,32,var(--scrim-top,    .10)) 0%,
+    rgba(11,16,32,var(--scrim-middle, .03)) 40%,
+    rgba(11,16,32,var(--scrim-bottom, .22)) 100%);
+  pointer-events: none;
+}
+
+/* ---------- 2. 渲染层 ---------- */
+#game-canvas{
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  z-index: 2;
+  pointer-events: none;              /* 鼠标事件统一交给 #app 捕获，避免层叠冲突 */
+  touch-action: none;
+}
+
+/* ---------- 3. 场景 UI 层 ---------- */
+#ui-layer{
+  position: absolute; inset: 0;
+  z-index: 3;
+  pointer-events: none;              /* 容器不拦截事件，只有按钮自身可点 */
+}
+#ui-layer > *{ pointer-events: auto; }
+
+/* ---------- 4. 常驻 HUD 层 ---------- */
+#hud-layer{
+  position: absolute; inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+#hud-layer > *{ pointer-events: auto; }
+
+/* 右上角声音按钮容器（padding 用 env() 兼容刘海屏） */
+.hud-top-right{
+  position: absolute;
+  top: calc(1.6vmin + env(safe-area-inset-top, 0px));
+  right: calc(1.6vmin + env(safe-area-inset-right, 0px));
+  display: flex; gap: 1.2vmin;
+  align-items: center;
+}
+
+/* ---------- 5. 加载遮罩 ---------- */
+#loading{
+  position: absolute; inset: 0; z-index: 9;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--c-bg);
+  transition: opacity .5s ease;
+}
+#loading.is-hidden{ opacity: 0; pointer-events: none; }
+.loading-box{ text-align: center; width: min(70vw, 420px); }
+.loading-spinner{
+  width: 6vmin; height: 6vmin; margin: 0 auto 2.4vmin;
+  border: .6vmin solid rgba(255,255,255,.15);
+  border-top-color: var(--c-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin{ to{ transform: rotate(360deg); } }
+.loading-text{ font-size: 2.2vmin; color: var(--c-text-dim); margin: 0 0 2vmin; }
+.loading-bar{
+  height: .8vmin; border-radius: 1vmin;
+  background: rgba(255,255,255,.12); overflow: hidden;
+}
+.loading-bar > i{
+  display: block; height: 100%; width: 0%;
+  background: var(--c-accent);
+  transition: width .25s ease;
+}
+
+/* ============================================================
+ * 图片按钮（ImageButton 生成的 DOM 结构）
+ * 结构：<button class="img-btn"><img class="img-btn__img"><span class="img-btn__fallback">
+ * 说明：图片加载失败时自动显示 fallback 文字，保证没有美术资源也能继续开发
+ * ============================================================ */
+.img-btn{
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; margin: 0; border: none; outline: none;
+  background: transparent;
+  cursor: pointer;
+  line-height: 0;
+  /* 统一按压反馈：轻微下沉 */
+  transition: transform .12s ease, filter .12s ease, opacity .2s ease;
+  -webkit-appearance: none;
+  touch-action: manipulation;
+}
+.img-btn:active{ transform: scale(.96); }          /* 按下 */
+.img-btn:hover{ filter: brightness(1.08); }        /* 悬停（受 .no-hover 影响可关闭） */
+.img-btn:focus-visible{                             /* 键盘无障碍焦点圈 */
+  outline: .4vmin solid var(--c-accent);
+  outline-offset: .6vmin;
+  border-radius: 1vmin;
+}
+.img-btn.is-disabled{ opacity: .45; pointer-events: none; filter: grayscale(1); }
+
+.img-btn__img{
+  display: block;
+  width: 100%; height: auto;
+  image-rendering: auto;
+  -webkit-user-drag: none; user-drag: none;
+  pointer-events: none;               /* 让点击始终落在 button 上，避免坐标判定异常 */
+}
+/* 图片缺失兜底：显示按钮文字，方便你先跑通逻辑再替换美术 */
+.img-btn__fallback{
+  display: none;
+  font-size: 2.4vmin; letter-spacing: .2em;
+  color: var(--c-text);
+  padding: 1.6vmin 4vmin;
+  border: .3vmin dashed rgba(255,255,255,.35);
+  border-radius: 1.4vmin;
+  background: rgba(255,255,255,.06);
+  line-height: 1;
+}
+.img-btn.is-missing .img-btn__img{ display: none; }
+.img-btn.is-missing .img-btn__fallback{ display: inline-block; }
+
+/* ============================================================
+ * 标题页（TitleScene）
+ * ============================================================ */
+.title-wrap{
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-end;   /* 按钮组靠下，留出背景图空间 */
+  padding-bottom: 12vmin;
+  gap: 3.2vmin;
+  animation: fade-up .8s ease both;
+}
+@keyframes fade-up{
+  from{ opacity: 0; transform: translateY(3vmin); }
+  to  { opacity: 1; transform: none; }
+}
+
+/* 标题文字：如果后续要用标题图片，直接替换 .title-logo 内的 <img> 即可 */
+.title-logo{
+  position: absolute;
+  top: 16vmin; left: 50%; transform: translateX(-50%);
+  text-align: center; width: 86vw;
+}
+.title-logo h1{
+  margin: 0;
+  font-size: 7.4vmin; font-weight: 600; letter-spacing: .12em;
+  text-shadow: 0 .6vmin 3vmin rgba(0,0,0,.6);
+}
+.title-logo p{
+  margin: 2vmin 0 0;
+  font-size: 2.6vmin; color: var(--c-text-dim); letter-spacing: .3em;
+}
+
+/* 菜单按钮组 */
+.title-menu{
+  display: flex; flex-direction: column; align-items: center;
+  gap: 2.6vmin;
+}
+/* 按钮尺寸：在这里统一控制"你的图片"显示多大（改 width 即可） */
+.btn-start{ width: 46vmin; max-width: 340px; }
+.btn-about{ width: 46vmin; max-width: 340px; }
+.btn-sound{ width: 8.5vmin; max-width: 64px; }
+.btn-back { width: 12vmin;  max-width: 96px; }
+
+/* ============================================================
+ * 关于页（AboutScene）
+ * ============================================================ */
+.about-wrap{
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  animation: fade-up .5s ease both;
+}
+.about-panel{
+  position: relative;
+  width: min(88vw, 860px);
+  max-height: 78vh; overflow-y: auto;
+  padding: 6vmin 5vmin;
+  /* 关于面板背景图占位：assets/ui/panel_about.png，加载失败时用半透明底色 */
+  background-color: rgba(12,18,38,.86);
+  background-size: 100% 100%;
+  border-radius: 2.4vmin;
+  box-shadow: 0 2vmin 8vmin rgba(0,0,0,.5);
+  -webkit-overflow-scrolling: touch;
+}
+.about-panel h2{ margin: 0 0 3vmin; font-size: 4.4vmin; letter-spacing: .1em; }
+.about-panel h3{ margin: 3.4vmin 0 1.4vmin; font-size: 3vmin; color: var(--c-accent); }
+.about-panel p, .about-panel li{
+  font-size: 2.5vmin; line-height: 1.9; color: var(--c-text-dim); margin: 0 0 1.4vmin;
+}
+.about-panel ul{ padding-left: 4vmin; margin: 0 0 1.4vmin; }
+/* ★ 同样要提高特异性，避免被 .btn{position:relative} 覆盖 */
+.btn.about-back{
+  position: absolute;
+  top: 3vmin; right: 3vmin;
+  z-index: 30;
+}
+
+/* ============================================================
+ * 介绍对话框（Dialog.js）
+ * 结构：.dialog-mask > .dialog-panel > (.dialog-title .dialog-body .dialog-hint)
+ * ============================================================ */
+.dialog-mask{
+  position: absolute; inset: 0; z-index: 7;      /* 在 HUD(4) 之上、loading(9) 之下 */
+  display: flex; align-items: center; justify-content: center;
+  padding: 6vmin;
+  background: rgba(6,9,18,.72);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  opacity: 0; transition: opacity .36s ease;
+  overscroll-behavior: contain;
+}
+.dialog-mask.is-open{ opacity: 1; }
+.dialog-mask.is-closing{ opacity: 0; }
+
+.dialog-panel{
+  position: relative;
+  width: min(90vw, 780px);
+  max-height: 82vh; overflow-y: auto;
+  padding: 6vmin 5vmin 5vmin;
+  /* ★ 对话框面板底图占位：assets/ui/panel_dialog.png（缺省用半透明底） */
+  background-color: rgba(14,20,38,.92);
+  background-size: 100% 100%;
+  border-radius: 2.4vmin;
+  box-shadow: 0 2vmin 10vmin rgba(0,0,0,.6);
+  transform: translateY(2.4vmin) scale(.98);
+  transition: transform .42s cubic-bezier(.22,.9,.3,1);
+  -webkit-overflow-scrolling: touch;
+}
+.dialog-mask.is-open .dialog-panel{ transform: none; }
+
+.dialog-title{
+  margin: 0 0 3.4vmin; font-size: 4vmin; font-weight: 600; letter-spacing: .1em;
+}
+.dialog-body{ margin: 0; }
+.dialog-line{
+  margin: 0 0 2.6vmin;
+  font-size: 2.7vmin; line-height: 2.05; color: var(--c-text);
+  white-space: pre-line;              /* 让配置里的 \n 生效 */
+  opacity: 0; transform: translateY(1.4vmin);
+  transition: opacity .55s ease, transform .55s ease;
+}
+.dialog-line:last-child{ margin-bottom: 1vmin; }
+.dialog-line.is-show{ opacity: 1; transform: none; }
+
+/* 3 秒后出现的那行小字 */
+.dialog-hint{
+  margin-top: 4vmin; text-align: center;
+  font-size: 2.1vmin; letter-spacing: .22em; color: var(--c-text-dim);
+  opacity: 0; transition: opacity .6s ease;
+}
+.dialog-hint.is-show{ opacity: 1; animation: hint-breathe 2.6s ease-in-out infinite; }
+@keyframes hint-breathe{
+  0%,100%{ opacity: .55; }
+  50%    { opacity: 1; }
+}
+
+/* ============================================================
+ * 场景选择页（SceneSelectScene）
+ * ============================================================ */
+.select-wrap{
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  animation: fade-up .55s ease both;
+  transition: opacity .45s ease, transform .45s ease;
+}
+/* 确认进入时的退场：整页轻微下沉淡出 */
+.select-wrap.is-leaving{ opacity: 0; transform: scale(1.04); }
+
+.select-head{
+  text-align: center;
+  padding-top: calc(9vmin + env(safe-area-inset-top, 0px));
+  flex: 0 0 auto;
+}
+.select-title{
+  margin: 0; font-size: 4.6vmin; font-weight: 600; letter-spacing: .14em;
+  text-shadow: 0 .5vmin 3vmin rgba(0,0,0,.7);
+}
+.select-sub{
+  margin: 1.4vmin 0 0; font-size: 2.2vmin; color: var(--c-text-dim); letter-spacing: .2em;
+}
+
+/* ---------- 轮播容器 ---------- */
+.carousel{
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  perspective: 140vmin;                 /* 3D coverflow 的透视 */
+  perspective-origin: 50% 45%;
+  touch-action: pan-y;                  /* 允许纵向滚动，横向交给 JS */
+  cursor: grab;
+  overflow: hidden;
+}
+.carousel.is-dragging{ cursor: grabbing; }
+.carousel__track{
+  position: absolute; inset: 0;
+  transform-style: preserve-3d;
+}
+
+/* ---------- 场景卡片 ---------- */
+.scene-card{
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
+  transition: box-shadow .3s ease;
+}
+.scene-card__inner{
+  position: relative;
+  width: 100%; height: 100%;
+  border-radius: 2.2vmin;
+  overflow: hidden;
+  box-shadow: 0 1.6vmin 5vmin rgba(0,0,0,.55);
+  transition: transform .3s ease, box-shadow .3s ease, filter .3s ease;
+  background: #0e1428;
+}
+.scene-card:hover .scene-card__inner{ transform: translateY(-.8vmin); filter: brightness(1.06); }
+
+/* ① 氛围动效 canvas（在背景图之上、文字之下） */
+.scene-card__fx{
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+}
+/* ② 背景图（★ 你的卡片图：assets/scenes/card_xxx.jpg） */
+.scene-card__bg{
+  position: absolute; inset: -6%;       /* 略微超出，滑动时可做视差 */
+  background-size: cover; background-position: center;
+  opacity: .58;
+  transition: opacity .35s ease;
+  pointer-events: none;
+}
+.scene-card.is-active .scene-card__bg{ opacity: .86; }
+/* ③ 暗部渐变：保证文字可读 */
+.scene-card__shade{
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(8,11,22,.10) 0%, rgba(8,11,22,.45) 42%, rgba(8,11,22,.94) 78%, rgba(8,11,22,.97) 100%);
+  pointer-events: none;
+}
+/* ④ 文字
+   ★ 用户要求：标题和介绍都要能直接显示，不要藏起来。
+     所以 desc 不再折叠（原来只有选中卡片才展开 max-height）。 */
+.scene-card__body{
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 3.2vmin 2.8vmin;
+  pointer-events: none;
+  display: flex; flex-direction: column;
+}
+.scene-card__index{
+  font-size: 2vmin; letter-spacing: .3em; color: var(--c-accent);
+  margin-bottom: .8vmin;
+}
+.scene-card__title{
+  margin: 0 0 1vmin; font-size: 4.2vmin; font-weight: 600; letter-spacing: .06em;
+  line-height: 1.25;
+  text-shadow: 0 1px 4px rgba(0,0,0,.7);
+}
+.scene-card__sub{
+  margin: 0 0 1.2vmin; font-size: 2.2vmin; color: var(--c-text); opacity: .9;
+  line-height: 1.4;
+}
+/* ★ 介绍文字：常态显示，不再折叠 */
+.scene-card__desc{
+  margin: 0 0 1.5vmin; font-size: 2.25vmin; line-height: 1.8; color: var(--c-text-dim);
+  max-height: none; opacity: 1; overflow: visible;
+  /* ★ 卡片已显著放大，介绍完整显示不再截断 */
+  text-shadow: 0 1px 3px rgba(0,0,0,.6);
+}
+.scene-card__tags{ display: flex; flex-wrap: wrap; gap: 1vmin; }
+.scene-card__tags{ display: flex; flex-wrap: wrap; gap: 1vmin; }
+.scene-card__tag{
+  font-size: 1.8vmin; letter-spacing: .1em;
+  padding: .7vmin 1.8vmin; border-radius: 3vmin;
+  background: rgba(127,209,193,.16);
+  border: .2vmin solid rgba(127,209,193,.45);
+  color: var(--c-accent);
+}
+/* ⑤ 选中态描边光 */
+.scene-card__glow{
+  position: absolute; inset: 0;
+  border-radius: 2.2vmin;
+  border: .35vmin solid transparent;
+  transition: border-color .35s ease, box-shadow .35s ease;
+  pointer-events: none;
+}
+.scene-card.is-active .scene-card__glow{
+  border-color: rgba(127,209,193,.9);
+  box-shadow: 0 0 4vmin rgba(127,209,193,.35), inset 0 0 3vmin rgba(127,209,193,.12);
+}
+/* 确认进入：卡片放大发光（"走进去"的转场） */
+.scene-card.is-entering .scene-card__inner{
+  transform: scale(1.16);
+  box-shadow: 0 0 8vmin rgba(127,209,193,.6);
+}
+.scene-card.is-entering{ transition: transform .5s ease, opacity .5s ease; }
+
+/* ---------- 左右箭头 ----------
+   ★ 必须写成 .btn.btn-arrow（两个类，特异性 0,2,0）：
+     .btn 基础规则在后面第 847 行设了 position: relative，
+     同为 0,1,0 的单类选择器会被它覆盖，导致箭头/返回按钮掉进文档流、
+     被挤到页面底部而"消失"。 */
+.btn.btn-arrow{
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 7vmin; max-width: 56px;
+  opacity: .9;
+}
+.btn.btn-arrow--left { left: calc(2vmin + env(safe-area-inset-left, 0px)); }
+.btn.btn-arrow--right{ right: calc(2vmin + env(safe-area-inset-right, 0px)); }
+.btn.btn-arrow.is-disabled{ opacity: .25; }
+@media (max-width: 640px){ .btn.btn-arrow{ display: none; } }   /* 小屏靠滑动，隐藏箭头 */
+
+/* ---------- 底部信息 + 进入按钮 ---------- */
+.select-foot{
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center; gap: 2.4vmin;
+  padding: 0 6vmin calc(5vmin + env(safe-area-inset-bottom, 0px));
+}
+.select-info{ text-align: center; min-height: 9vmin; }
+.select-info__title{
+  margin: 0 0 .8vmin; font-size: 3vmin; letter-spacing: .1em;
+}
+.select-info__desc{
+  margin: 0; font-size: 2.1vmin; color: var(--c-text-dim);
+}
+.btn-enter{ width: 38vmin; max-width: 300px; }
+
+/* ★ 同理必须写成 .btn.select-back，否则 position 被 .btn 基础规则覆盖 */
+.btn.select-back{
+  position: absolute;
+  top: calc(2vmin + env(safe-area-inset-top, 0px));
+  left: calc(2vmin + env(safe-area-inset-left, 0px));
+  width: 8vmin; max-width: 64px;
+  z-index: 30;                    /* 压在轮播卡片之上，保证始终可点 */
+}
+
+/* ============================================================
+ * 已选择场景占位页（PendingScene）
+ * ============================================================ */
+.pending-wrap{
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  animation: fade-up .5s ease both;
+}
+.pending-panel{
+  position: relative;
+  width: min(88vw, 720px);
+  padding: 6vmin 5vmin;
+  background-color: rgba(14,20,38,.92);
+  background-size: 100% 100%;
+  border-radius: 2.4vmin;
+  box-shadow: 0 2vmin 8vmin rgba(0,0,0,.5);
+  text-align: center;
+}
+.pending-eyebrow{
+  margin: 0 0 1.6vmin; font-size: 2vmin; letter-spacing: .34em; color: var(--c-accent);
+}
+.pending-title{
+  margin: 0 0 2vmin; font-size: 5vmin; font-weight: 600; letter-spacing: .1em;
+}
+.pending-desc{
+  margin: 0 0 3vmin; font-size: 2.4vmin; color: var(--c-text-dim);
+}
+.pending-note{
+  margin: 0; font-size: 2.3vmin; line-height: 2; color: var(--c-text);
+}
+.pending-todo{ color: var(--c-text-dim); font-size: 2vmin; }
+.btn.pending-back{
+  position: absolute; top: 3vmin; right: 3vmin;
+  width: 9vmin; max-width: 72px;
+  z-index: 30;
+}
+
+/* ============================================================
+ * 游戏内 HUD（GameScene 动态创建）
+ * ============================================================ */
+.hud-load{
+  position: absolute;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(4vmin + env(safe-area-inset-bottom, 0px));
+  width: min(70vw, 520px);
+  text-align: center;
+}
+.hud-load__label{
+  font-size: 2.1vmin; color: var(--c-text-dim); letter-spacing: .2em;
+  margin-bottom: 1.2vmin;
+}
+.hud-load__track{
+  height: 1.6vmin; border-radius: 1vmin;
+  background: rgba(255,255,255,.14); overflow: hidden;
+}
+.hud-load__fill{
+  height: 100%; width: 0%;
+  background: var(--c-accent);
+  transition: width .15s linear, background-color .3s ease;
+}
+/* 负载偏高 / 过载时改变颜色（由 JS 切换 class） */
+.hud-load.is-warn  .hud-load__fill{ background: var(--c-warn); }
+.hud-load.is-danger .hud-load__fill{ background: var(--c-danger); }
+
+.hud-tip{
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: calc(3vmin + env(safe-area-inset-top, 0px));
+  font-size: 2.3vmin; color: var(--c-text-dim);
+  padding: 1.4vmin 3vmin; border-radius: 2vmin;
+  background: rgba(0,0,0,.35);
+  opacity: 0; transition: opacity .4s ease;
+  pointer-events: none; text-align: center; max-width: 80vw;
+}
+.hud-tip.is-show{ opacity: 1; }
+
+/* ============================================================
+ * 关卡伪加载页（LevelIntroScene）
+ * 排版原则：★ 全部文字一次性展现，不滚动、不逐段淡入。
+ *   正文整体淡入一次；段间距收紧、行高 1.75，保证一屏读完。
+ *   「操作提示」单独成块（左对齐），与居中正文形成层级对比。
+ * ============================================================ */
+.li-wrap{
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  padding: calc(6vmin + env(safe-area-inset-top, 0px)) 6vmin calc(4vmin + env(safe-area-inset-bottom, 0px));
+  background: rgba(8,11,22,.55);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  transition: opacity .45s ease, transform .45s ease;
+}
+.li-wrap.is-leaving{ opacity: 0; transform: scale(1.03); }
+
+/* 正文区：居中整块，不滚动 */
+.li-text{
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; justify-content: center;
+  gap: 1.9vmin;
+  animation: fade-up .7s ease both;      /* 整体淡入一次，替代逐段淡入 */
+}
+.li-p{
+  margin: 0;
+  font-size: clamp(13px, 2.45vmin, 21px);
+  line-height: 1.75;
+  letter-spacing: .03em;
+  color: var(--c-text);
+  white-space: pre-line;              /* 让数据里的 \n 生效 */
+  text-align: center;
+}
+/* 第二段「你迟到了。」单独强调 */
+.li-p:nth-child(2){
+  font-size: clamp(15px, 3.0vmin, 26px);
+  font-weight: 600; letter-spacing: .12em;
+  margin: .4vmin 0;
+}
+
+/* 操作提示块 */
+.li-ops{
+  align-self: center;
+  width: min(90%, 560px);
+  margin-top: 2vmin;
+  padding: 2vmin 2.6vmin;
+  border-left: .45vmin solid var(--c-accent);
+  background: rgba(127,209,193,.07);
+  border-radius: 1.2vmin;
+}
+.li-ops__title{
+  font-size: clamp(12px, 2.0vmin, 17px);
+  letter-spacing: .26em; color: var(--c-accent);
+  margin-bottom: 1.2vmin;
+}
+.li-ops__list{ margin: 0; padding-left: 4vmin; }
+.li-ops__list li{
+  font-size: clamp(12px, 2.15vmin, 18px);
+  line-height: 1.7; color: var(--c-text);
+  margin-bottom: .5vmin;
+}
+.li-ops__list li:last-child{ margin-bottom: 0; }
+.li-ops__list li::marker{ color: var(--c-accent); }
+
+/* 竖屏：vmin 变小会导致字过小，这里按屏宽回调，同时仍保证一屏放得下 */
+@media (orientation: portrait){
+  .li-p{ font-size: clamp(14px, 3.5vmin, 21px); }
+  .li-p:nth-child(2){ font-size: clamp(16px, 4.2vmin, 26px); }
+  .li-ops__title{ font-size: clamp(13px, 2.9vmin, 18px); }
+  .li-ops__list li{ font-size: clamp(13px, 3.1vmin, 19px); }
+  .li-text{ gap: 1.4vmin; }
+}
+
+/* 底部：进度条 → 按钮 */
+.li-bottom{
+  flex: 0 0 auto;
+  position: relative;
+  min-height: 12vmin;
+  display: flex; align-items: center; justify-content: center;
+  margin-top: 2.4vmin;
+}
+.li-progress{
+  position: absolute; left: 50%; transform: translateX(-50%);
+  width: min(60%, 520px); height: 1.4vmin;
+  border-radius: 1vmin; background: rgba(255,255,255,.13);
+  overflow: hidden;
+  transition: opacity .35s ease;
+}
+.li-progress.is-hidden{ opacity: 0; }
+.li-progress__fill{
+  display: block; height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--c-accent), #a9e6d8);
+  transition: width .12s linear;
+}
+/* 按钮组：进度条跑满后淡入（"进度条变成了按钮"） */
+.li-actions{
+  display: flex; align-items: center; justify-content: center;
+  gap: 3vmin; flex-wrap: wrap;
+  opacity: 0; transform: translateY(2vmin);
+  transition: opacity .5s ease, transform .5s ease;
+  pointer-events: none;
+}
+.li-actions.is-show{ opacity: 1; transform: none; pointer-events: auto; }
+.btn-ready{ width: 34vmin; max-width: 260px; }
+.btn-know { width: 34vmin; max-width: 260px; }
+
+/* ============================================================
+ * 第一关 HUD（Level1Scene）
+ * ============================================================ */
+/* ★ 关卡 HUD 是全屏容器，必须让它"透明"于点击，否则会吞掉场景里所有交互。
+   注意选择器特异性：#ui-layer > * 是 (1,0,0)，会盖掉 .lvl-hud 的 (0,1,0)，
+   所以这里必须写成 #ui-layer > .lvl-hud（(1,1,0)）才能真正生效。 */
+#ui-layer > .lvl-hud{ position: absolute; inset: 0; pointer-events: none; }
+.lvl-hud > *{ pointer-events: auto; }
+/* 纯展示性部件不参与命中，避免挡住场景点击 */
+.lvl-hud > .lvl-hint,
+.lvl-hud > .lvl-sub{ pointer-events: none; }
+
+/* 顶部提示 */
+.lvl-hint{
+  position: absolute; left: 50%; transform: translateX(-50%) translateY(-1vmin);
+  top: calc(11vmin + env(safe-area-inset-top, 0px));
+  max-width: 78vw; text-align: center;
+  font-size: 2.5vmin; line-height: 1.7; letter-spacing: .04em;
+  color: var(--c-text);
+  padding: 1.5vmin 3vmin; border-radius: 2vmin;
+  background: rgba(8,11,22,.62);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  opacity: 0; transition: opacity .35s ease, transform .35s ease;
+  pointer-events: none;
+}
+.lvl-hint.is-show{ opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 左上角：子场景名 + 进度 */
+.lvl-sub{
+  position: absolute;
+  top: calc(3vmin + env(safe-area-inset-top, 0px));
+  left: calc(11vmin + env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; gap: .4vmin;
+  pointer-events: none;
+}
+.lvl-sub__name{ font-size: 2.4vmin; letter-spacing: .16em; color: var(--c-text); }
+.lvl-sub__prog{ font-size: 2vmin; letter-spacing: .1em; color: var(--c-accent); }
+
+/* 右上角下方：平静条 + 休息按钮（避开顶部声音按钮） */
+.lvl-right{
+  position: absolute;
+  top: calc(11vmin + env(safe-area-inset-top, 0px));
+  right: calc(1.8vmin + env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 1.4vmin;
+}
+.lvl-calm{
+  display: flex; align-items: center; gap: 1.2vmin;
+}
+.lvl-calm__label{ font-size: 1.9vmin; letter-spacing: .2em; color: var(--c-text-dim); }
+.lvl-calm__track{
+  display: block; width: 20vmin; height: 1.1vmin;
+  background: rgba(255,255,255,.15); border-radius: 1vmin; overflow: hidden;
+}
+.lvl-calm__fill{
+  display: block; height: 100%; width: 100%;
+  background: var(--c-accent);
+  transition: width .2s linear, background-color .3s ease;
+}
+.lvl-calm__fill.is-mid{ background: var(--c-warn); }
+.lvl-calm__fill.is-low{ background: var(--c-danger); }
+.btn-rest{ width: 22vmin; max-width: 168px; }
+
+/* 左上角退出按钮 */
+.lvl-quit{
+  position: absolute;
+  top: calc(2.6vmin + env(safe-area-inset-top, 0px));
+  left: calc(2vmin + env(safe-area-inset-left, 0px));
+  width: 7.5vmin; max-width: 60px;
+  opacity: .85;
+}
+
+/* ============================================================
+ * 关卡信息卡
+ * ============================================================ */
+.lvl-card-wrap{
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  padding: 6vmin;
+  transition: opacity .5s ease, transform .5s ease;
+  animation: fade-up .6s ease both;
+}
+.lvl-card-wrap.is-leaving{ opacity: 0; transform: scale(1.05); }
+.lvl-card{
+  position: relative;
+  width: min(90vw, 660px);
+  max-height: 84vh; overflow-y: auto;
+  padding: 5.5vmin 5vmin;
+  text-align: center;
+  /* ★ 信息卡面板底图占位：assets/ui/panel_level_info.png */
+  background-color: rgba(12,18,34,.88);
+  background-size: 100% 100%;
+  border-radius: 2.4vmin;
+  box-shadow: 0 2vmin 10vmin rgba(0,0,0,.55);
+  -webkit-overflow-scrolling: touch;
+  cursor: pointer;
+}
+.lvl-card__eyebrow{
+  margin: 0 0 1.8vmin; font-size: 2.1vmin; letter-spacing: .42em; color: var(--c-accent);
+}
+.lvl-card__title{
+  margin: 0 0 1.4vmin; font-size: 6vmin; font-weight: 600; letter-spacing: .14em;
+}
+.lvl-card__subtitle{
+  margin: 0 0 4vmin; font-size: 2.7vmin; letter-spacing: .1em; color: var(--c-text-dim);
+}
+.lvl-card__meta{
+  display: grid; grid-template-columns: auto 1fr; gap: 1.4vmin 2.4vmin;
+  justify-content: center; align-items: center;
+  margin: 0 0 4vmin;
+}
+.lvl-card__meta dt{
+  font-size: 2.1vmin; letter-spacing: .2em; color: var(--c-text-dim); text-align: right;
+}
+.lvl-card__meta dd{
+  margin: 0; font-size: 2.4vmin; color: var(--c-text); text-align: left;
+}
+.lvl-card__subs{ text-align: left; }
+.lvl-card__subsTitle{
+  font-size: 2.1vmin; letter-spacing: .2em; color: var(--c-text-dim);
+  margin-bottom: 1.6vmin; text-align: center;
+}
+.lvl-card__subsList{
+  margin: 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 1.2vmin;
+}
+.lvl-card__subsList li{
+  display: flex; align-items: center; gap: 1.8vmin;
+  font-size: 2.5vmin; color: var(--c-text);
+  padding: 1.4vmin 2vmin; border-radius: 1.2vmin;
+  background: rgba(255,255,255,.05);
+}
+.lvl-card__idx{
+  flex: 0 0 auto;
+  width: 4.4vmin; height: 4.4vmin; min-width: 24px; min-height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: rgba(127,209,193,.16);
+  border: .2vmin solid rgba(127,209,193,.5);
+  color: var(--c-accent); font-size: 2vmin;
+}
+.lvl-card__hint{
+  margin-top: 4vmin;
+  font-size: 2.2vmin; letter-spacing: .3em; color: var(--c-accent);
+  opacity: 0; transition: opacity .5s ease;
+}
+.lvl-card__hint.is-show{ opacity: 1; animation: hint-breathe 2.6s ease-in-out infinite; }
+
+/* ============================================================
+ * 关卡结束面板
+ * ============================================================ */
+.lvl-end{
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  padding: 6vmin;
+  background: rgba(8,11,22,.72);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+  animation: fade-up .6s ease both;
+}
+.lvl-end__panel{
+  position: relative;
+  width: min(88vw, 620px);
+  padding: 5.5vmin 5vmin;
+  text-align: center;
+  background: rgba(12,18,34,.92);
+  border-radius: 2.4vmin;
+  box-shadow: 0 2vmin 10vmin rgba(0,0,0,.55);
+}
+.lvl-end__eyebrow{
+  margin: 0 0 1.6vmin; font-size: 2vmin; letter-spacing: .38em; color: var(--c-accent);
+}
+.lvl-end__panel h2{
+  margin: 0 0 3vmin; font-size: 5vmin; font-weight: 600; letter-spacing: .1em;
+}
+.lvl-end__text{
+  margin: 0; font-size: 2.5vmin; line-height: 2; color: var(--c-text-dim);
+}
+.lvl-end__back{
+  position: absolute; top: 2.6vmin; right: 2.6vmin;
+  width: 8vmin; max-width: 64px;
+}
+
+/* ============================================================
+ * ★ 按钮：纯 CSS 成品样式（不再依赖图片）
+ *
+ * 设计语言：玻璃拟态 + 主色渐变 + 微光边框
+ *   .btn            基础按钮（渐变底 / 圆角 / 阴影 / 内高光）
+ *   .btn--primary   主行动（开始绘本 / 我准备好了）—— 青绿渐变
+ *   .btn--ghost     次级（关于 / 再了解一下）—— 半透明玻璃
+ *   .btn--choice    选择题选项 —— 大块、易点
+ *   .btn--icon      图标按钮（声音 / 返回）—— 圆形玻璃
+ *   .btn--pill      小胶囊（跳过 / 休息一下）
+ *
+ * 尺寸用 clamp()：小屏不挤、大屏不虚。
+ * ★ 移动端注意：无 :hover，全部走 :active 与交互动效。
+ * ============================================================ */
+.btn{
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: .6em;
+  padding: clamp(10px, 1.6vmin, 16px) clamp(20px, 3.4vmin, 40px);
+  font: inherit;
+  font-size: clamp(14px, 2.5vmin, 22px);
+  font-weight: 600;
+  letter-spacing: .12em;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0,0,0,.55);   /* ★ 任何底色上都读得清 */
+  border: 0; border-radius: 999px;
+  cursor: pointer;
+  user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform .18s cubic-bezier(.34,1.56,.64,1),
+              box-shadow .18s ease, filter .18s ease, opacity .18s ease;
+  /* 内高光：顶部细亮线，让按钮有"鼓起来"的质感 */
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,0) 46%),
+    linear-gradient(160deg, var(--btn-c1, #7fd1c1), var(--btn-c2, #4fa89a));
+  box-shadow:
+    0 .6vmin 2vmin rgba(0,0,0,.32),
+    inset 0 1px 0 rgba(255,255,255,.35),
+    inset 0 -.1em .3em rgba(0,0,0,.12);
+}
+.btn::after{
+  /* 外圈微光 */
+  content: ""; position: absolute; inset: -2px;
+  border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.14);
+}
+.btn:hover{ filter: brightness(1.08); transform: translateY(-2px); }
+.btn:active{ transform: translateY(1px) scale(.985); filter: brightness(.95); }
+.btn:focus-visible{ outline: 2px solid var(--c-accent); outline-offset: 3px; }
+.btn[disabled]{ opacity: .45; pointer-events: none; filter: saturate(.5); }
+
+/* 主行动按钮 */
+.btn--primary{
+  --btn-c1: #86e3d0; --btn-c2: #3f9e91;
+  padding-inline: clamp(26px, 4.4vmin, 52px);
+  font-size: clamp(15px, 2.8vmin, 25px);
+}
+.btn--primary:hover{ box-shadow:
+  0 1vmin 3vmin rgba(80,220,195,.34),
+  inset 0 1px 0 rgba(255,255,255,.4); }
+
+/* 次级：玻璃 */
+.btn--ghost{
+  --btn-c1: rgba(12,18,32,.62); --btn-c2: rgba(6,10,20,.62);
+  color: #ffffff;
+  backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.32),
+              0 .5vmin 1.8vmin rgba(0,0,0,.45);
+}
+
+/* 选择题选项：大块、纵向、易点（★ 配色见后面"选项按钮"处的定义） */
+.btn--choice{
+  display: flex; width: 100%;
+  min-height: clamp(48px, 8vmin, 76px);
+  padding: clamp(12px, 2vmin, 20px) clamp(18px, 3vmin, 32px);
+  justify-content: center; text-align: center;
+  font-size: clamp(15px, 2.6vmin, 23px);
+  letter-spacing: .06em;
+  border-radius: 1.6vmin;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.btn--choice.is-correct{
+  --btn-c1: #8ee6d3; --btn-c2: #3fa893;
+  animation: choice-ok .32s ease;
+}
+.btn--choice.is-wrong{
+  --btn-c1: #e89a9a; --btn-c2: #b45f5f;
+  animation: shake-x .38s ease;
+}
+@keyframes choice-ok{
+  0%{ transform: scale(1);} 45%{ transform: scale(1.045);} 100%{ transform: scale(1);}
+}
+@keyframes shake-x{
+  0%,100%{ transform: translateX(0);} 20%{ transform: translateX(-6px);}
+  40%{ transform: translateX(6px);} 60%{ transform: translateX(-4px);} 80%{ transform: translateX(3px);}
+}
+
+/* 图标按钮（声音 / 返回 / 左右箭头）
+   ★ 底色用"深色半透明"而非"浅色半透明"：
+     这类按钮常叠在视频/大图上，浅底遇到亮画面会直接看不见。
+     深色底 + 白描边 + 白色图标，在明暗画面上都成立。 */
+.btn--icon{
+  width: clamp(40px, 6.4vmin, 62px);
+  height: clamp(40px, 6.4vmin, 62px);
+  padding: 0;
+  border-radius: 50%;
+  --btn-c1: rgba(8,12,22,.70); --btn-c2: rgba(4,7,14,.70);
+  color: #ffffff;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.38),
+              0 .4vmin 1.4vmin rgba(0,0,0,.5);
+  overflow: hidden;
+}
+.btn--icon:hover{
+  --btn-c1: rgba(16,22,38,.82); --btn-c2: rgba(8,12,22,.82);
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.55),
+              0 .4vmin 1.4vmin rgba(0,0,0,.5);
+}
+.btn--icon svg{ width: 56%; height: 56%; display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
+
+/* ★ 右上角声音按钮（常驻 HUD，跨场景都在视频/大图之上）：对比度单独加固 */
+#hud-layer .btn--icon{
+  --btn-c1: rgba(8,12,22,.78); --btn-c2: rgba(4,7,14,.78);
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.45),
+              0 .5vmin 1.8vmin rgba(0,0,0,.6);
+}
+
+/* 小胶囊（跳过 / 休息） */
+.btn--pill{
+  padding: clamp(7px, 1.1vmin, 11px) clamp(14px, 2.2vmin, 26px);
+  font-size: clamp(12px, 1.9vmin, 17px);
+  letter-spacing: .16em;
+  --btn-c1: rgba(255,255,255,.13); --btn-c2: rgba(255,255,255,.04);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+}
+
+/* ============================================================
+ * 交互电影：视频 + 叠加交互层
+ *
+ * ★ 对比度原则（重要）：所有叠在视频上的面板/文字，
+ *   都要假设"底下可能是很亮的画面"。因此统一采用
+ *     深实底（alpha ≥ .92） + 纯白字 + 描边 + 外阴影
+ *   而不是半透明浅底 —— 后者在亮画面上会糊成一片。
+ * ============================================================ */
+.vl-root{
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: #05070d;
+}
+.vl-stage{ position: relative; width: 100%; height: 100%; overflow: hidden; }
+.vl-video{
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;               /* 完整画面，留黑边 —— 保证交互坐标不错位 */
+  background: #000; display: block;
+}
+.vl-hud{ position: absolute; inset: 0; pointer-events: none; }
+.vl-hud > *{ pointer-events: auto; }
+
+/* ---- 点击交互层（★ 不画区域框，只有一行文字提示） ---- */
+.it-layer{ position: absolute; inset: 0; }
+.it-layer.is-done{ animation: fade-out .26s ease forwards; }
+@keyframes fade-out{ to{ opacity: 0; } }
+
+.it-tip{
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 1.5vmin 3vmin;
+  border-radius: 999px;
+  /* 深实底 + 白字：在任何画面上都读得清 */
+  background: rgba(4,7,14,.94);
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.30),
+              0 .8vmin 2.6vmin rgba(0,0,0,.65);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: tip-breathe 2.4s ease-in-out infinite;
+}
+.it-tip__text{
+  font-size: clamp(14px, 2.5vmin, 23px);
+  font-weight: 600;
+  letter-spacing: .08em;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0,0,0,.8);
+}
+.it-tip--top-right   { left: 73%; top: 25%; }
+.it-tip--bottom-left { left: 27%; top: 75%; }
+.it-tip--top-left    { left: 27%; top: 25%; }
+.it-tip--bottom-right{ left: 73%; top: 75%; }
+@keyframes tip-breathe{
+  0%,100%{ transform: translate(-50%,-50%) scale(1); }
+  50%    { transform: translate(-50%,-50%) scale(1.035); }
+}
+/* 点错了：文字连闪 3 下（不消失） */
+.it-tip.is-wrong{ animation: tip-wrong .5s ease 1; }
+@keyframes tip-wrong{
+  0%,100%{ opacity: 1; } 16%{ opacity: .2; } 33%{ opacity: 1; }
+  50%{ opacity: .2; } 66%{ opacity: 1; } 83%{ opacity: .2; }
+}
+.it-tip.is-wrong .it-tip__text{ color: #ffd0d0; }
+
+/* ---- 选择题：高对比面板 ---- */
+.it-layer--choice{
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(3,5,11,.72);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+  animation: fade-in .3s ease both;
+}
+.it-choice{
+  position: relative;
+  width: min(88%, 640px);
+  padding: clamp(22px, 4.2vmin, 48px);
+  border-radius: 2.2vmin;
+  background: rgba(9,13,24,.97);           /* 近乎实底，避免亮画面透上来 */
+  box-shadow: 0 2.4vmin 9vmin rgba(0,0,0,.75),
+              inset 0 0 0 1.5px rgba(255,255,255,.16);
+  text-align: center;
+}
+.it-choice__q{
+  font-size: clamp(17px, 3.2vmin, 30px);
+  font-weight: 600;
+  letter-spacing: .08em;
+  margin-bottom: clamp(16px, 3vmin, 32px);
+  color: #ffffff;
+  text-shadow: 0 1px 4px rgba(0,0,0,.6);
+}
+.it-choice__list{
+  display: flex; flex-direction: column; gap: clamp(10px, 1.8vmin, 18px);
+}
+/* ★ 选项按钮：改用"不透明浅底 + 黑字"。
+   原来是半透明白底 + 白字，在亮画面（教室黑板）上叠出来接近全白，
+   白字完全看不清。浅底不透明后，任何背景下都是黑字，对比度稳定 ~15:1。 */
+.btn--choice{
+  --btn-c1: #ffffff; --btn-c2: #e8eef7;
+  color: #0a0f1c;                          /* 黑字 */
+  box-shadow: inset 0 0 0 1.5px rgba(10,15,28,.28),
+              0 .4vmin 1.4vmin rgba(0,0,0,.45);
+  text-shadow: none;
+}
+.btn--choice:hover{
+  --btn-c1: #ffffff; --btn-c2: #d6e2f2;
+  box-shadow: inset 0 0 0 1.5px rgba(10,15,28,.5),
+              0 .4vmin 1.4vmin rgba(0,0,0,.45);
+}
+.btn--choice:active{ --btn-c1: #dbe6f4; --btn-c2: #c3d4ea; }
+.btn--choice.is-correct{
+  --btn-c1: #8ee6d3; --btn-c2: #2f8f7c;
+  color: #06231d;                          /* 深字浅底，保持高对比 */
+  text-shadow: none;
+}
+.btn--choice.is-wrong{
+  --btn-c1: #f0a8a8; --btn-c2: #b05252;
+  color: #2a0b0b; text-shadow: none;
+}
+.it-choice__wrong{
+  position: absolute; left: 50%; bottom: clamp(-8px, .2vmin, 0px);
+  transform: translate(-50%, 100%);
+  font-size: clamp(13px, 2.1vmin, 19px);
+  font-weight: 600;
+  color: #ffc9c9;                          /* 亮红，深底上清晰 */
+  text-shadow: 0 1px 4px rgba(0,0,0,.8);
+  opacity: 0; transition: opacity .3s ease;
+  white-space: nowrap;
+}
+.it-choice__wrong.is-show{ opacity: 1; }
+
+/* ---- 悬浮文字（座位算式）：深实底 ---- */
+.it-overlay{
+  position: absolute; left: 50%; top: 12%;
+  transform: translate(-50%, -6px);
+  padding: 1.7vmin 3.2vmin;
+  border-radius: 1.4vmin;
+  background: rgba(4,7,14,.94);
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.28),
+              0 .8vmin 2.6vmin rgba(0,0,0,.65);
+  font-size: clamp(16px, 3vmin, 28px);
+  font-weight: 600;
+  letter-spacing: .08em;
+  color: #ffffff;
+  text-shadow: 0 1px 4px rgba(0,0,0,.8);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0; transition: opacity .35s ease, transform .35s ease;
+}
+.it-overlay.is-show{ opacity: 1; transform: translate(-50%, 0); }
+
+/* ---- 右上角工具条（跳过 / 退出） ----
+   ★ 图标按钮加深底，保证在亮画面上也看得见 */
+.vl-tools{
+  position: absolute;
+  top: calc(1.6vmin + env(safe-area-inset-top, 0px));
+  right: calc(1.6vmin + env(safe-area-inset-right, 0px));
+  display: flex; gap: 1.2vmin; align-items: center;
+  z-index: 6;
+}
+.vl-tools .btn--icon{
+  --btn-c1: rgba(8,12,22,.72); --btn-c2: rgba(4,7,14,.72);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.38),
+              0 .4vmin 1.4vmin rgba(0,0,0,.5);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.vl-tools .btn--pill{
+  --btn-c1: rgba(8,12,22,.72); --btn-c2: rgba(4,7,14,.72);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.34),
+              0 .4vmin 1.4vmin rgba(0,0,0,.5);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  text-shadow: 0 1px 3px rgba(0,0,0,.7);
+}
+
+/* ---- 闹铃提示（444 新增第一段）----
+   ★ 全屏居中大字 + 呼吸闪烁；--alarm-scale / --alarm-blink 由 JS 按重播次数设置，
+     每次重播字号更大、闪得更快，第 3 次后自动放行。 */
+.vl-alarm{
+  position: absolute; inset: 0;
+  z-index: 7;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;                 /* 不拦截点击 —— 点哪都能关闹铃 */
+  opacity: 0; visibility: hidden;
+  transition: opacity .3s ease;
+}
+.vl-alarm.is-show{ opacity: 1; visibility: visible; }
+.vl-alarm__inner{
+  text-align: center;
+  padding: clamp(20px, 4vmin, 46px) clamp(28px, 6vmin, 68px);
+  border-radius: 2.4vmin;
+  background: rgba(4,7,14,.92);
+  box-shadow: 0 2vmin 7vmin rgba(0,0,0,.7),
+              inset 0 0 0 1.5px rgba(255,255,255,.22);
+  transform: scale(var(--alarm-scale, 1));
+  transition: transform .35s ease;
+  animation: alarm-blink var(--alarm-blink, 2.6s) ease-in-out infinite;
+}
+.vl-alarm__text{
+  font-size: clamp(22px, 5.6vmin, 52px);
+  font-weight: 600; letter-spacing: .18em;
+  color: #ffffff;
+  text-shadow: 0 2px 8px rgba(0,0,0,.8);
+  line-height: 1.3;
+}
+.vl-alarm__sub{
+  margin-top: 1.6vmin;
+  font-size: clamp(12px, 2.1vmin, 20px);
+  letter-spacing: .14em;
+  color: #cfe0f5;
+  opacity: .9;
+}
+@keyframes alarm-blink{
+  0%,100%{ opacity: .55; }
+  50%    { opacity: 1; }
+}
+
+/* ---- 加载指示 ---- */
+.vl-loading{
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: clamp(13px, 2.2vmin, 20px);
+  color: #ffffff; letter-spacing: .2em;
+  background: #05070d;
+  transition: opacity .3s ease;
+}
+.vl-loading.is-hidden{ opacity: 0; pointer-events: none; }
+
+/* ---- 强制横屏遮罩 ---- */
+.vl-rotate{
+  position: absolute; inset: 0; z-index: 20;
+  display: none;
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: 2.4vmin;
+  background: rgba(3,5,11,.98);
+  text-align: center; padding: 6vmin;
+}
+.vl-rotate.is-show{ display: flex; }
+.vl-rotate__icon{
+  width: 12vmin; height: 12vmin; min-width: 56px; min-height: 56px;
+  border: .8vmin solid var(--c-accent); border-radius: 1.6vmin;
+  animation: rotate-hint 2.4s ease-in-out infinite;
+}
+.vl-rotate__title{
+  font-size: clamp(17px, 3.2vmin, 28px); letter-spacing: .16em; color: #fff;
+}
+.vl-rotate__text{
+  font-size: clamp(13px, 2.1vmin, 19px); color: #c9d3e6; letter-spacing: .1em;
+}
+@keyframes rotate-hint{
+  0%,40%{ transform: rotate(0deg);} 60%,100%{ transform: rotate(-90deg);}
+}
+
+/* ---- 关卡信息卡 ---- */
+.vl-card{
+  position: absolute; inset: 0; z-index: 8;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(3,5,11,.86);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  transition: opacity .42s ease, transform .42s ease;
+  animation: fade-in .45s ease both;
+}
+.vl-card.is-leaving{ opacity: 0; transform: scale(1.04); }
+.vl-card__box{
+  text-align: center;
+  padding: clamp(26px, 5.2vmin, 60px) clamp(30px, 6.4vmin, 72px);
+  border-radius: 2.4vmin;
+  background: rgba(9,13,24,.97);
+  box-shadow: 0 2.4vmin 9vmin rgba(0,0,0,.7),
+              inset 0 0 0 1.5px rgba(255,255,255,.16);
+}
+.vl-card__eyebrow{
+  margin: 0 0 1.6vmin; font-size: clamp(12px, 2.1vmin, 19px);
+  letter-spacing: .4em; color: var(--c-accent);
+}
+.vl-card__title{
+  margin: 0 0 1.2vmin;
+  font-size: clamp(23px, 5.4vmin, 48px);
+  font-weight: 600; letter-spacing: .14em; color: #fff;
+}
+.vl-card__subtitle{
+  margin: 0 0 3.4vmin;
+  font-size: clamp(14px, 2.5vmin, 23px);
+  color: #dbe4f5; letter-spacing: .1em;
+}
+.vl-card__meta{
+  display: grid; grid-template-columns: auto 1fr;
+  gap: 1.2vmin 2.4vmin;
+  justify-content: center; align-items: center;
+  margin: 0 0 4vmin;
+}
+.vl-card__meta dt{
+  font-size: clamp(11px, 2vmin, 18px);
+  letter-spacing: .2em; color: #aab6cc; text-align: right;
+}
+.vl-card__meta dd{
+  margin: 0; text-align: left;
+  font-size: clamp(13px, 2.2vmin, 20px); color: #fff;
+}
+
+/* ---- 结束面板 ---- */
+.vl-end{
+  position: absolute; inset: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(3,5,11,.9);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  animation: fade-in .45s ease both;
+}
+.vl-end__box{ text-align: center; padding: clamp(26px, 5vmin, 58px); }
+.vl-end__title{
+  font-size: clamp(21px, 4.6vmin, 42px); letter-spacing: .18em;
+  margin-bottom: 2vmin; color: #fff;
+}
+.vl-end__text{
+  font-size: clamp(14px, 2.4vmin, 22px); color: #dbe4f5;
+  margin-bottom: 4vmin; letter-spacing: .08em;
+}
+
+
+/* ============================================================
+ * 看黑板交互（第 5 个交互点）
+ * ★ 同样是叠加层，统一遵循"深实底 + 白字"的高对比原则
+ * ============================================================ */
+.gaze-root{
+  position: absolute; inset: 0;
+  opacity: 0; pointer-events: none;
+  transition: opacity .35s ease;
+}
+.gaze-root.is-show{ opacity: 1; }
+.gaze-canvas{
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  touch-action: none;                 /* ★ 拖动视野，禁用页面滚动 */
+  cursor: grab;
+}
+.gaze-root.is-show .gaze-canvas{ pointer-events: auto; }
+.gaze-canvas:active{ cursor: grabbing; }
+
+/* 提示条：复用 .it-overlay 的深底白字，位置改到底部 */
+.gaze-hint{
+  top: auto; bottom: 6%;
+  transform: translate(-50%, 6px);
+  font-size: clamp(14px, 2.5vmin, 22px);
+  opacity: 0;
+}
+.gaze-hint.is-show{ opacity: 1; transform: translate(-50%, 0); }
+
+/* 倒计时：顶部中央偏左，避开右上角声音按钮 */
+.gaze-timer{
+  position: absolute;
+  left: 50%; top: 5%;
+  transform: translateX(-50%);
+  padding: 1vmin 2.4vmin;
+  border-radius: 999px;
+  background: rgba(4,7,14,.94);
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.30),
+              0 .6vmin 2vmin rgba(0,0,0,.6);
+  font-size: clamp(16px, 3vmin, 28px);
+  font-weight: 700; letter-spacing: .06em;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0,0,0,.8);
+  pointer-events: none;
+}
+.gaze-timer.is-urgent{
+  color: #ffb3b3;
+  box-shadow: inset 0 0 0 1.5px rgba(255,150,150,.6),
+              0 .6vmin 2vmin rgba(0,0,0,.6);
+}
+
+/* 对准进度提示 */
+.gaze-dwell{
+  position: absolute;
+  left: 50%; top: 13%;
+  transform: translateX(-50%);
+  padding: .9vmin 2.2vmin;
+  border-radius: 999px;
+  background: rgba(4,7,14,.94);
+  box-shadow: inset 0 0 0 1.5px rgba(127,209,193,.55),
+              0 .6vmin 2vmin rgba(0,0,0,.6);
+  font-size: clamp(13px, 2.2vmin, 20px);
+  font-weight: 600; letter-spacing: .06em;
+  color: #d9f5ee;
+  white-space: nowrap;
+  opacity: 0; transition: opacity .2s ease;
+  pointer-events: none;
+}
+.gaze-dwell.is-near{ opacity: 1; }
+
+/* ============================================================
+ * 资源缺失提示条（仅 debug 模式出现，帮助排查图片没加载的问题）
+ * ============================================================ */
+.asset-warn{
+  position: absolute; z-index: 8;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(2vmin + env(safe-area-inset-bottom, 0px));
+  display: flex; align-items: center; gap: 1.6vmin;
+  max-width: 90vw;
+  padding: 1.6vmin 2.4vmin;
+  background: rgba(217,122,122,.16);
+  border: .25vmin solid rgba(217,122,122,.6);
+  border-radius: 1.4vmin;
+  color: #ffd9d9;
+  font-size: 2vmin; line-height: 1.5;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  transition: opacity .8s ease;
+}
+.asset-warn.is-fade{ opacity: 0; }
+.asset-warn b{ flex: 0 0 auto; font-weight: 600; }
+.asset-warn span{ opacity: .85; }
+.asset-warn__btn{
+  flex: 0 0 auto; margin-left: auto;
+  width: 3.2vmin; height: 3.2vmin; min-width: 20px; min-height: 20px;
+  border: none; border-radius: 50%; cursor: pointer;
+  background: rgba(255,255,255,.18); color: #fff;
+  font-size: 2vmin; line-height: 1;
+}
+
+/* 竖屏适配：手机竖屏时缩小标题与卡片间距，保证卡片完整可见 */
+@media (orientation: portrait) and (max-width: 820px){
+  .select-title{ font-size: 5.6vmin; }
+  .select-sub{ font-size: 2.8vmin; }
+  .scene-card__title{ font-size: 4.2vmin; }
+  .scene-card__sub{ font-size: 2.6vmin; }
+  .scene-card__desc{ font-size: 2.3vmin; }
+  .scene-card__tag{ font-size: 2.2vmin; }
+  .btn-enter{ width: 56vmin; max-width: 320px; }
+  .select-info__title{ font-size: 3.8vmin; }
+  .select-info__desc{ font-size: 2.6vmin; }
+  .dialog-line{ font-size: 3.4vmin; line-height: 2.1; }
+  .dialog-hint{ font-size: 2.6vmin; }
+}

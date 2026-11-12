@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- viewport：锁定缩放，适配移动端；H5 小游戏常用配置 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>感官之旅 · 自闭症儿童第一人称体验</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============================================================
+     应用根节点
+     分层说明（从底到顶）：
+     1. #bg-layer     背景图层（标题页背景图、场景底图）
+     2. #game-canvas  渲染层（第一人称 3D/伪 3D 画面、粒子、特效）
+     3. #ui-layer     场景 UI 层（开始/关于/返回等按钮，由各场景动态挂载）
+     4. #hud-layer    常驻 HUD 层（右上角声音开关等全局控件，跨场景保留）
+     5. #loading      首屏资源加载遮罩
+     ============================================================ -->
+<div id="app">
+
+  <!-- 1. 背景层：放静态大图，不参与逐帧渲染，性能更好 -->
+  <div id="bg-layer"></div>
+
+  <!-- 2. 渲染层：第一人称画面都画在这里 -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- 3. 场景 UI 层：由 Scene.mountUI() 动态填充 -->
+  <div id="ui-layer"></div>
+
+  <!-- 4. 常驻 HUD：声音控制按钮始终在右上角 -->
+  <div id="hud-layer">
+    <!-- 声音按钮由 js/ui/ImageButton.js 在 main.js 中创建并插入这里 -->
+  </div>
+
+  <!-- 5. 加载遮罩：资源加载完成后自动淡出 -->
+  <div id="loading">
+    <div class="loading-box">
+      <div class="loading-spinner"></div>
+      <p class="loading-text">正在准备感官世界…</p>
+      <div class="loading-bar"><i id="loading-bar-fill"></i></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================================================
+     脚本加载顺序（有依赖关系，请勿随意调换）
+     采用传统 <script> 全局挂载方式：无需构建工具，双击 index.html 即可运行
+     ============================================================ -->
+<script src="js/config.js"></script>          <!-- 全局配置 + 资源清单 -->
+<script src="js/core/EventBus.js"></script>   <!-- 事件总线 -->
+<script src="js/core/AssetLoader.js"></script><!-- 图片预加载 + 占位兜底 -->
+<script src="js/core/AudioManager.js"></script><!-- 全局声音控制 -->
+<script src="js/core/Input.js"></script>      <!-- 键鼠/触摸输入 -->
+<script src="js/ui/ImageButton.js"></script>  <!-- 图片按钮组件（保留，暂未使用） -->
+<script src="js/ui/CssButton.js"></script>     <!-- ★ 纯 CSS 按钮组件（现役默认） -->
+<script src="js/core/Scene.js"></script>      <!-- 场景基类 -->
+<script src="js/core/SceneManager.js"></script>
+<script src="js/core/Game.js"></script>       <!-- 主循环 / 画布 / 全局服务 -->
+
+<!-- UI 组件：对话框、轮播（依赖 ImageButton 与 EventBus） -->
+<script src="js/ui/IntroDialog.js"></script>
+<script src="js/ui/Carousel.js"></script>
+
+<!-- 各场景：新增场景时在这里加一行 <script> 即可 -->
+<script src="js/scenes/TitleScene.js"></script>
+<script src="js/scenes/AboutScene.js"></script>
+<script src="js/scenes/SceneSelectScene.js"></script>
+<script src="js/scenes/PendingScene.js"></script>
+<script src="js/scenes/LevelIntroScene.js"></script>  <!-- 关卡伪加载页（进度条 → 两个按钮） -->
+
+<!-- 交互电影：视频播放 → 叠加交互层 → 关卡主控
+     ★ 旧的第一人称感官模拟版本已归档到 legacy/level1_sensory/（保留备用） -->
+<script src="js/core/FX.js"></script>
+<script src="js/core/VideoPlayer.js"></script>
+<script src="js/ui/InteractLayer.js"></script>
+<script src="js/scenes/level1/BoardGaze.js"></script>
+<script src="js/scenes/VideoLevelScene.js"></script>
+
+<!-- 5 个生活场景的元数据（场景选择页读取） -->
+<script src="js/data/sceneCards.js"></script>
+<!-- 第一关的全部文案与数值参数 -->
+<script src="js/data/level1.js"></script>
+<!-- 关卡数据（第一人称体验的数据，下一步开发用） -->
+<script src="js/data/levels.js"></script>
+<!-- 第一人称体验原型：流程暂未接入，下一步开发时注册即可
+     <script src="js/scenes/ExperienceScene.js"></script> -->
+
+<script src="js/main.js"></script>            <!-- 启动入口 -->
+</body>
+</html>
